@@ -933,6 +933,7 @@ textarea:focus {
     </div>
 
     <div id="toast" class="toast" hidden></div>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
 const APP_CONFIG = {
   spreadsheetId: "1rFM8AKt89RGO0D_nJwJ-t94hMM0F3oTaN4ULENnf17o",
@@ -1535,16 +1536,12 @@ async function handleEntrySubmit(event) {
   }
 }
 
-function escapeXml(value) {
-  return String(value == null ? "" : value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
-}
-
 function exportData() {
+  if (typeof XLSX === "undefined") {
+    showToast("Chưa tải được bộ xuất Excel. Kiểm tra mạng rồi thử lại.");
+    return;
+  }
+
   const rows = allRows().filter((row) => state.month === "all" || monthKey(row.date) === state.month);
   const headers = ["Loại", "ID", "Ngày", "Số tiền", "Danh mục", "Người nhập", "Nội dung", "Trạng thái", "Ghi chú"];
   const dataRows = rows.map((row) => [
@@ -1559,70 +1556,31 @@ function exportData() {
     row.note
   ]);
 
-  const headerXml = headers.map((header) =>
-    `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`
-  ).join("");
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+  worksheet["!cols"] = [
+    { wch: 8 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 42 },
+    { wch: 20 },
+    { wch: 32 }
+  ];
+  worksheet["!freeze"] = { xSplit: 0, ySplit: 1 };
 
-  const rowsXml = dataRows.map((row) => `
-    <Row>
-      ${row.map((cell, index) => {
-        if (index === 3) {
-          return `<Cell ss:StyleID="Money"><Data ss:Type="Number">${Number(cell || 0)}</Data></Cell>`;
-        }
-        return `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`;
-      }).join("")}
-    </Row>
-  `).join("");
+  for (let rowIndex = 1; rowIndex <= dataRows.length; rowIndex += 1) {
+    const moneyCell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: 3 })];
+    if (moneyCell) moneyCell.z = "#,##0";
+  }
 
-  const excel = `<?xml version="1.0" encoding="UTF-8"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
- <Styles>
-  <Style ss:ID="Default" ss:Name="Normal">
-   <Alignment ss:Vertical="Center" ss:WrapText="1"/>
-   <Font ss:FontName="Arial" ss:Size="11"/>
-  </Style>
-  <Style ss:ID="Header">
-   <Font ss:FontName="Arial" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
-   <Interior ss:Color="#146C63" ss:Pattern="Solid"/>
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-  </Style>
-  <Style ss:ID="Money">
-   <NumberFormat ss:Format="#,##0"/>
-  </Style>
- </Styles>
- <Worksheet ss:Name="Dòng tiền">
-  <Table>
-   <Column ss:Width="55"/>
-   <Column ss:Width="75"/>
-   <Column ss:Width="80"/>
-   <Column ss:Width="95"/>
-   <Column ss:Width="105"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="230"/>
-   <Column ss:Width="110"/>
-   <Column ss:Width="180"/>
-   <Row>${headerXml}</Row>
-   ${rowsXml}
-  </Table>
-  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-   <FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane>
-  </WorksheetOptions>
- </Worksheet>
-</Workbook>`;
-
-  const blob = new Blob([excel], { type: "application/vnd.ms-excel;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `dong-tien-${state.month}.xls`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Dòng tiền");
+  XLSX.writeFile(workbook, `dong-tien-${state.month}.xlsx`, {
+    bookType: "xlsx",
+    compression: true
+  });
 }
 
 function fillCategoryOptions() {
