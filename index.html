@@ -820,7 +820,7 @@ textarea:focus {
             <section class="panel">
               <div class="panel-head">
                 <h2>Gần nhất</h2>
-                <button id="exportBtn" class="text-btn" type="button">Xuất CSV</button>
+                <button id="exportBtn" class="text-btn" type="button">Xuất dữ liệu</button>
               </div>
               <div id="recentList" class="activity-list"></div>
             </section>
@@ -1535,30 +1535,94 @@ async function handleEntrySubmit(event) {
   }
 }
 
-function exportCsv() {
+function escapeXml(value) {
+  return String(value == null ? "" : value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function exportData() {
   const rows = allRows().filter((row) => state.month === "all" || monthKey(row.date) === state.month);
-  const csvRows = [
-    ["Loại", "ID", "Ngày", "Số tiền", "Danh mục", "Người nhập", "Nội dung", "Trạng thái", "Ghi chú"],
-    ...rows.map((row) => [
-      row.type === "income" ? "Thu" : "Chi",
-      row.id,
-      displayDate(row.date),
-      row.amount,
-      row.category,
-      row.user,
-      row.content,
-      row.status,
-      row.note
-    ])
-  ];
-  const csv = csvRows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
-  const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
+  const headers = ["Loại", "ID", "Ngày", "Số tiền", "Danh mục", "Người nhập", "Nội dung", "Trạng thái", "Ghi chú"];
+  const dataRows = rows.map((row) => [
+    row.type === "income" ? "Thu" : "Chi",
+    row.id,
+    displayDate(row.date),
+    Number(row.amount || 0),
+    row.category,
+    row.user,
+    row.content,
+    row.status,
+    row.note
+  ]);
+
+  const headerXml = headers.map((header) =>
+    `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`
+  ).join("");
+
+  const rowsXml = dataRows.map((row) => `
+    <Row>
+      ${row.map((cell, index) => {
+        if (index === 3) {
+          return `<Cell ss:StyleID="Money"><Data ss:Type="Number">${Number(cell || 0)}</Data></Cell>`;
+        }
+        return `<Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`;
+      }).join("")}
+    </Row>
+  `).join("");
+
+  const excel = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal">
+   <Alignment ss:Vertical="Center" ss:WrapText="1"/>
+   <Font ss:FontName="Arial" ss:Size="11"/>
+  </Style>
+  <Style ss:ID="Header">
+   <Font ss:FontName="Arial" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Interior ss:Color="#146C63" ss:Pattern="Solid"/>
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="Money">
+   <NumberFormat ss:Format="#,##0"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Dòng tiền">
+  <Table>
+   <Column ss:Width="55"/>
+   <Column ss:Width="75"/>
+   <Column ss:Width="80"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="105"/>
+   <Column ss:Width="100"/>
+   <Column ss:Width="230"/>
+   <Column ss:Width="110"/>
+   <Column ss:Width="180"/>
+   <Row>${headerXml}</Row>
+   ${rowsXml}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane>
+  </WorksheetOptions>
+ </Worksheet>
+</Workbook>`;
+
+  const blob = new Blob([excel], { type: "application/vnd.ms-excel;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `dong-tien-${state.month}.csv`;
+  anchor.download = `dong-tien-${state.month}.xls`;
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function fillCategoryOptions() {
@@ -1681,7 +1745,7 @@ function bindEvents() {
   el.incomeForm.addEventListener("submit", handleEntrySubmit);
   el.expenseForm.addEventListener("submit", handleEntrySubmit);
   el.settingsForm.addEventListener("submit", handleSettingsSubmit);
-  el.exportBtn.addEventListener("click", exportCsv);
+  el.exportBtn.addEventListener("click", exportData);
 }
 
 function boot() {
