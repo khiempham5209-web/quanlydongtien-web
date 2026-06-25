@@ -37,7 +37,8 @@
 html {
   background: #dfe5ea;
   width: 100%;
-  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
 }
 
@@ -47,7 +48,8 @@ body {
   background: radial-gradient(circle at top, #ffffff 0, #dfe5ea 58%, #cbd4dc 100%);
   font-family: var(--app-font);
   font-size: calc(14px * var(--font-scale));
-  min-height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
   touch-action: manipulation;
 }
@@ -235,13 +237,28 @@ textarea {
 }
 
 .entry-form input[type="date"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 34px;
   padding: 7px 6px;
+  margin: 0;
   font-size: calc(12px * var(--font-scale));
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
 }
 
 .entry-form input[type="date"]::-webkit-date-and-time-value {
   text-align: left;
+  min-width: 0;
+  width: 100%;
+}
+
+.entry-form label {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .entry-form textarea {
@@ -337,7 +354,7 @@ textarea:focus {
   min-height: 0;
   width: 100%;
   overflow: visible;
-  padding: 9px 8px calc(90px + env(safe-area-inset-bottom));
+  padding: 9px 8px calc(104px + env(safe-area-inset-bottom));
 }
 
 .topbar {
@@ -612,7 +629,7 @@ textarea:focus {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 5px;
-  padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+  padding: 7px 8px max(34px, env(safe-area-inset-bottom));
   background: color-mix(in srgb, var(--panel) 94%, transparent);
   border-top: 1px solid var(--line);
   backdrop-filter: blur(16px);
@@ -1206,27 +1223,49 @@ function jsonpRequest(params) {
   });
 }
 
+async function withRetry(task, attempts = 2) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => window.setTimeout(resolve, 650 * attempt));
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function apiGet() {
   if (!state.settings.apiUrl) return cloneData(SAMPLE_DATA);
-  const payload = await jsonpRequest({
-    action: "list",
-    email: state.email
-  });
+  const payload = await withRetry(async () => {
+    const result = await jsonpRequest({
+      action: "list",
+      email: state.email,
+      cacheBust: Date.now()
+    });
+    if (!result.data || !Array.isArray(result.data.income) || !Array.isArray(result.data.expense)) {
+      throw new Error("Apps Script trả dữ liệu chưa đầy đủ.");
+    }
+    return result;
+  }, 2);
   return payload.data;
 }
 
 async function apiAppend(type, row) {
   if (!state.settings.apiUrl) {
-    state.data[type].push(row);
     return { ok: true };
   }
 
-  const payload = await jsonpRequest({
+  const payload = await withRetry(() => jsonpRequest({
     action: "append",
     email: state.email,
     type,
-    row: JSON.stringify(row)
-  });
+    row: JSON.stringify(row),
+    cacheBust: Date.now()
+  }), 2);
   return payload;
 }
 
@@ -1471,18 +1510,28 @@ async function handleEntrySubmit(event) {
   const form = event.currentTarget;
   const type = form.dataset.type;
   const row = formToRow(form);
+  const submitButton = form.querySelector("button[type='submit']");
+  const originalText = submitButton.textContent;
+  state.data[type].push(row);
+  buildMonthFilter();
+  render();
 
   try {
+    submitButton.disabled = true;
+    submitButton.textContent = "Đang lưu...";
     await apiAppend(type, row);
-    if (state.settings.apiUrl) await loadData();
-    buildMonthFilter();
-    render();
     form.reset();
     form.querySelector('[name="date"]').valueAsDate = new Date();
     form.querySelector('[name="category"]').value = type === "income" ? "Doanh thu" : "Sinh hoạt";
     showToast("Đã lưu chứng từ.");
   } catch (error) {
+    state.data[type] = state.data[type].filter((item) => item.id !== row.id);
+    buildMonthFilter();
+    render();
     showToast(error.message);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
   }
 }
 
